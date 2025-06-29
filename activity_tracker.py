@@ -6,6 +6,8 @@ import datetime
 import pytz
 import traceback
 import argparse
+from collections import defaultdict
+import math
 
 
 # for running main() as an async function
@@ -141,6 +143,7 @@ class ActivityTracker():
     LAST_JOIN_KEY = 'last_join'
     LAST_LEAVE_KEY = 'last_leave'
     LAST_LONG_JOIN_KEY = 'last_long_join'
+    NUM_HOURS_KEY = 'num_hours'
 
     # Defining what a join means
     MINS_FOR_LONG_JOIN = 30
@@ -149,24 +152,31 @@ class ActivityTracker():
 
     # Search for 2 joins within the last 60 days
     MINS_FOR_ACTIVITY_RANGE = 60*24*60 # search within 60 days
-    NUM_LONG_JOINS_FOR_ACTIVITY = 2 # search for 2 long joins within the activity range
+    NUM_LONG_JOINS_FOR_ACTIVITY = 20 # search for 20 long joins within the activity range
 
     # Print config
     IGN_WIDTH = 20  # Adjust the width as needed
     LAST_JOIN_WIDTH = 15
+    LAST_LONG_JOINS_WIDTH = 50
+    NUM_LONG_JOINS_WIDTH = 15
+    NUM_HOURS_WIDTH = 15
     # last long join width is variable
     PRINT_TIMEZONE = pytz.timezone('US/Eastern')
 
     # Raw promotion criteria
     MINS_FOR_RAW_PROMOTION_ACTIVITY_RANGE = 60*24*7 # within the last week
-    NUM_LONG_JOINS_FOR_RAW_PROMOTION = 1
+    NUM_LONG_JOINS_FOR_RAW_PROMOTION = 3 #1
     MINS_FOR_RAW_JOIN_DATE_PROMOTION_RANGE = 60*24*30 # join for a month
 
     # Boiled promotion criteria
     MINS_FOR_BOILED_PROMOTION_ACTIVITY_RANGE = 60*24*7 # within the last week
-    NUM_LONG_JOINS_FOR_BOILED_PROMOTION = 1
+    NUM_LONG_JOINS_FOR_BOILED_PROMOTION = 3 #1
     MINS_FOR_BOILED_JOIN_DATE_PROMOTION_RANGE = 60*24*91 # join for 3 months aka approx 91 days
-    SCRAMBLED_SB_LEVEL = 240
+    SCRAMBLED_SB_LEVEL = 280
+
+    MAX_TIME_PER_LOGIN_MINS = 4 * 60 # 4 hours per login
+    TOTAL_TIME_FOR_ACTIVITY_MINS = 25 * 60 # 25 hours
+
 
     # File names for additional logs
     GUILD_LIST_FILENAME = "data/guild_list.txt"
@@ -176,7 +186,13 @@ class ActivityTracker():
         self._reset()
 
     def _reset(self):
-        self.activity = {} # key: ign, value: {'last_join': timestamp, 'last_leave': timestamp, 'last_long_joins': [date1, date2, ...]}
+        # key: ign, value: {'last_join': timestamp, 'last_leave': timestamp, 'last_long_joins': [date1, date2, ...]}
+        self.activity = defaultdict(lambda: {
+            self.LAST_JOIN_KEY: datetime.datetime.min.replace(tzinfo=self.PRINT_TIMEZONE),
+            self.LAST_LEAVE_KEY: datetime.datetime.min.replace(tzinfo=self.PRINT_TIMEZONE),
+            self.LAST_LONG_JOIN_KEY: [],
+            self.NUM_HOURS_KEY: 0,
+        })
 
     def get_ign(self, log):
         return log['ign']
@@ -192,6 +208,10 @@ class ActivityTracker():
     
     def is_long_join(self, start, end):
         return self.is_time_within_mins(start, end, self.MINS_FOR_LONG_JOIN)
+
+    def get_time_within_timestamps(self, start, end):
+        diff = end - start
+        return diff.seconds
     
     def is_time_within_mins(self, start, end, mins):
         diff = end - start
@@ -279,7 +299,7 @@ class ActivityTracker():
         """
         Get igns that should be promoted from boiled to scrambled
         """
-        boiled_igns = self.guild_list_dict["Hard Boiled Egg"]
+        boiled_igns = self.guild_list_dict["Boiled Egg"]
         today = datetime.datetime.now().astimezone(self.PRINT_TIMEZONE)
 
         activity_range_start = self.nearest_log_time - datetime.timedelta(minutes=self.MINS_FOR_BOILED_PROMOTION_ACTIVITY_RANGE)
@@ -321,8 +341,6 @@ class ActivityTracker():
         # Parse logs
         for log in logs:
             ign = self.get_ign(log)
-            if ign not in self.activity:
-                self.activity[ign] = {self.LAST_JOIN_KEY: None, self.LAST_LEAVE_KEY: None, self.LAST_LONG_JOIN_KEY: []}
 
             # Parse this log
             is_join = self.get_is_join(log)
@@ -353,6 +371,8 @@ class ActivityTracker():
                             or self.activity[ign][self.LAST_LONG_JOIN_KEY][-1] != self.activity[ign][self.LAST_JOIN_KEY]:
                         self.activity[ign][self.LAST_LONG_JOIN_KEY].append(self.activity[ign][self.LAST_JOIN_KEY])
         
+                self.activity[ign][self.NUM_HOURS_KEY] += min(self.MAX_TIME_PER_LOGIN_MINS / 60, self.get_time_within_timestamps(last_join_timestamp, timestamp) / 60 / 60)
+
         # Sort igns in each category by last join time
         self.active_igns = sorted(self.get_active_igns(), key=lambda ign: self.activity[ign][self.LAST_JOIN_KEY], reverse=True)
         self.inactive_igns = sorted(
@@ -362,6 +382,7 @@ class ActivityTracker():
         self.grace_period_igns = sorted(igns_in_grace_period, key=lambda ign: self.activity[ign][self.LAST_JOIN_KEY], reverse=True)
 
         # Remove igns that aren't currently in the guild
+        print("\n\nRemoving from active_igns:", ", ".join([ign for ign in self.active_igns if ign not in guild_list]), "\n\n")
         self.active_igns = [ign for ign in self.active_igns if ign in guild_list]
         self.inactive_igns = [ign for ign in self.inactive_igns if ign in guild_list]
         self.grace_period_igns = [ign for ign in self.grace_period_igns if ign in guild_list]
@@ -374,28 +395,6 @@ class ActivityTracker():
         self.raw_to_boiled_promotion_igns = self.get_raw_to_boiled_promotion_igns()
         self.boiled_to_scrambled_promotion_igns = self.get_boiled_to_scrambled_promotion_igns()
 
-        # Print results    
-        self.print_activity_log()
-
-        # Printing disclaimers
-        furthest_log_time_str = self.furthest_log_time.astimezone(self.PRINT_TIMEZONE).strftime('%b %d %Y %H:%M')
-        nearest_log_time_str = self.nearest_log_time.astimezone(self.PRINT_TIMEZONE).strftime('%b %d %Y %H:%M')
-        # Get the last modification time
-        guild_list_last_modified = datetime.datetime.fromtimestamp(os.path.getmtime(self.GUILD_LIST_FILENAME)).astimezone(self.PRINT_TIMEZONE)
-        sb_level_list_last_modified = datetime.datetime.fromtimestamp(os.path.getmtime(self.SB_LEVEL_LIST_FILENAME)).astimezone(self.PRINT_TIMEZONE)
-        sb_level_list_last_modified_str = sb_level_list_last_modified.strftime('%b %d %Y %H:%M')
-        guild_list_last_modified_str = guild_list_last_modified.strftime('%b %d %Y %H:%M')
-        today = datetime.datetime.now().astimezone(self.PRINT_TIMEZONE)
-        print(f"\nActivity calculation using logs from [{furthest_log_time_str}] to [{nearest_log_time_str}]" \
-                + f" ({(self.nearest_log_time - self.furthest_log_time).days} days)")
-        print(f"Guild list last updated: {guild_list_last_modified_str}")
-        if (today - guild_list_last_modified).days > 1:
-            print(f"{RED}WARNING: Guild list has not been updated in the last day. Check for updates.{RESET}")
-        print(f"SB level list last updated: {sb_level_list_last_modified_str}")
-        if (today - sb_level_list_last_modified).days > 1:
-            print(f"{RED}WARNING: SB level list has not been updated in the last day. Check for updates.{RESET}")
-        print("Note: This does not support ign changes")
-        print()
 
     def print_activity_log(self):
         """
@@ -405,20 +404,27 @@ class ActivityTracker():
             ign_str = f"{'IGN':<{self.IGN_WIDTH}}"
             last_join_str = f"{'Last Join':<{self.LAST_JOIN_WIDTH}}"
             last_long_joins_str = "Last Long Joins(s)"
-            print(f"{ign_str}\t{last_join_str}\t{last_long_joins_str}")
-            print("-"*69)
+            num_long_joins_str = "# Long Join(s)"
+            num_hours_str = "# Hour(s)"
+            print(f"{ign_str}\t{last_join_str}\t{num_long_joins_str}\t{num_hours_str}\t{last_long_joins_str}")
+            print("-"*100)
 
         def print_row(ign, info):
             ign_str = f"{ign:<{self.IGN_WIDTH}}"
             if info is not None:
                 last_join_str = f"{info[self.LAST_JOIN_KEY].astimezone(self.PRINT_TIMEZONE).strftime('%b %d %H:%M'):<{self.LAST_JOIN_WIDTH}}"
-                last_long_joins_str = f"{[t.astimezone(self.PRINT_TIMEZONE).strftime('%b %d %H:%M') for t in info[self.LAST_LONG_JOIN_KEY][:-self.NUM_LONG_JOINS_FOR_ACTIVITY-1:-1]]}"
+                last_long_joins_str = f"{[t.astimezone(self.PRINT_TIMEZONE).strftime('%b %d %H:%M') for t in info[self.LAST_LONG_JOIN_KEY][:-min(3, self.NUM_LONG_JOINS_FOR_ACTIVITY)-1:-1]]}"
                 if len(info[self.LAST_LONG_JOIN_KEY]) > self.NUM_LONG_JOINS_FOR_ACTIVITY:
                     last_long_joins_str = last_long_joins_str[:-1] + ", ...]"
+                last_longs_join_str = f"{last_long_joins_str:<{self.LAST_LONG_JOINS_WIDTH}}"
+                num_long_joins_str = f"{len(info[self.LAST_LONG_JOIN_KEY]):<{self.NUM_LONG_JOINS_WIDTH}}"
+                num_hours_str = f"{math.floor(info[self.NUM_HOURS_KEY]):<{self.NUM_HOURS_WIDTH}.0f}"
             else:
                 last_join_str = f"{'N/A':<{self.LAST_JOIN_WIDTH}}"
-                last_long_joins_str = "[]"
-            print(f"{ign_str}\t{last_join_str}\t{last_long_joins_str}")
+                last_long_joins_str = f"{'[]':<{self.LAST_LONG_JOINS_WIDTH}}"
+                num_long_joins_str = f"{'N/A':<{self.NUM_LONG_JOINS_WIDTH}}"
+                num_hours_str = f"{'N/A':<{self.NUM_HOURS_WIDTH}}"
+            print(f"{ign_str}\t{last_join_str}\t{num_long_joins_str}\t{num_hours_str}\t{last_long_joins_str}")
 
         # Get activity per ign
         active_activity = {ign: self.activity[ign] for ign in self.active_igns}
@@ -431,6 +437,9 @@ class ActivityTracker():
         print_header()
         for ign, info in active_activity.items():
             print_row(ign, info)
+        print("In alphabetical order:")
+        for ign in sorted(list(active_activity.keys()), key=lambda x: x.lower()):
+            print(ign)
 
         print("\n\n")
 
@@ -470,12 +479,33 @@ class ActivityTracker():
             print(f"{RED}WARNING: No recent guild join date logs for {unknown_join_igns}. Manually check guild join date before promoting{RESET}")
         print([ign for ign in self.boiled_to_scrambled_promotion_igns if ign not in unknown_join_igns])
 
+    def print_disclaimers(self):
+        furthest_log_time_str = self.furthest_log_time.astimezone(self.PRINT_TIMEZONE).strftime('%b %d %Y %H:%M')
+        nearest_log_time_str = self.nearest_log_time.astimezone(self.PRINT_TIMEZONE).strftime('%b %d %Y %H:%M')
+        # Get the last modification time
+        guild_list_last_modified = datetime.datetime.fromtimestamp(os.path.getmtime(self.GUILD_LIST_FILENAME)).astimezone(self.PRINT_TIMEZONE)
+        sb_level_list_last_modified = datetime.datetime.fromtimestamp(os.path.getmtime(self.SB_LEVEL_LIST_FILENAME)).astimezone(self.PRINT_TIMEZONE)
+        sb_level_list_last_modified_str = sb_level_list_last_modified.strftime('%b %d %Y %H:%M')
+        guild_list_last_modified_str = guild_list_last_modified.strftime('%b %d %Y %H:%M')
+        today = datetime.datetime.now().astimezone(self.PRINT_TIMEZONE)
+        print(f"\nActivity calculation using logs from [{furthest_log_time_str}] to [{nearest_log_time_str}]" \
+                + f" ({(self.nearest_log_time - self.furthest_log_time).days} days)")
+        print(f"Guild list last updated: {guild_list_last_modified_str}")
+        if (today - guild_list_last_modified).days > 1:
+            print(f"{RED}WARNING: Guild list has not been updated in the last day. Check for updates.{RESET}")
+        print(f"SB level list last updated: {sb_level_list_last_modified_str}")
+        if (today - sb_level_list_last_modified).days > 1:
+            print(f"{RED}WARNING: SB level list has not been updated in the last day. Check for updates.{RESET}")
+        print("Note: This does not support ign changes")
+        print()
+
     def get_active_igns(self):
         """
         Use requirements for activity
         """
-        return [ign for ign in self.activity.keys() \
-                    if len(self.activity[ign][self.LAST_LONG_JOIN_KEY]) >= self.NUM_LONG_JOINS_FOR_ACTIVITY]
+        return [ign for ign in sum(self.guild_list_dict.values(), []) \
+                    if len(self.activity[ign][self.LAST_LONG_JOIN_KEY]) >= self.NUM_LONG_JOINS_FOR_ACTIVITY \
+                        or self.activity[ign][self.NUM_HOURS_KEY] >= self.TOTAL_TIME_FOR_ACTIVITY_MINS / 60]
          
 async def main(args):
     # Load sensitive configs like guild ID, channel ID, and bot token
@@ -501,6 +531,8 @@ async def main(args):
     # Calculate activity and print
     tracker = ActivityTracker()
     tracker.calculate_activity(log_file)
+    tracker.print_activity_log()
+    tracker.print_disclaimers()
     
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
