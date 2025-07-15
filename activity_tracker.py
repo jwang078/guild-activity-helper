@@ -184,6 +184,9 @@ class ActivityTracker():
 
     def __init__(self):
         self._reset()
+        # Make folder called output if it doesn't exist
+        if not os.path.exists("output"):
+            os.makedirs("output")
 
     def _reset(self):
         # key: ign, value: {'last_join': timestamp, 'last_leave': timestamp, 'last_long_joins': [date1, date2, ...]}
@@ -440,6 +443,11 @@ class ActivityTracker():
         print("In alphabetical order:")
         for ign in sorted(list(active_activity.keys()), key=lambda x: x.lower()):
             print(ign)
+
+        # Save active players to a txt file
+        with open("output/active_igns.txt", "w") as f:
+            for ign in active_activity.keys():
+                f.write(f"{ign}\n")
 
         print("\n\n")
 

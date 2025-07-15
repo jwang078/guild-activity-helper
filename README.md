@@ -13,3 +13,9 @@ If you want to use a saved log file instead of re-downloading from discord API, 
 ```
 python activity_tracker.py --log_file logs/name_of_log_file.txt
 ```
+
+The activity tracker produces `output/active_igns.txt`. Then, you can update discord roles with:
+
+```
+python update_active_roles.py
+```
