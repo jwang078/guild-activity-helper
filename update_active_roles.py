@@ -26,24 +26,34 @@ class DiscordRoleUpdaterClient(discord.Client):
     async def on_ready(self):
         print(f"Logged in as {self.user}")
 
+        print("Getting guild...")
         guild = self.get_guild(self.guild_id)
         if guild is None:
             print("Guild not found.")
             await self.close()
             return
 
+        print(f"Getting role {self.ROLE_NAME}...")
         role = discord.utils.get(guild.roles, name=self.ROLE_NAME)
         if role is None:
             print(f"Role '{self.ROLE_NAME}' not found in guild.")
             await self.close()
             return
 
+        print("Fetching members...")
         # Fetch members to ensure full member list
         await guild.chunk()
 
+        print(f"Found {len(guild.members)} members in the guild.")
         for name in self.member_names:
-            # Search by nickname first, fallback to username if needed
-            member = discord.utils.find(lambda m: m.nick == name or m.name == name, guild.members)
+            # Search by nickname, name, and global_name
+            member = discord.utils.find(
+                lambda m:
+                    (m.nick is not None and m.nick.strip().lower() == name.strip().lower()) \
+                    or (m.name is not None and m.name.strip().lower() == name.strip().lower()) \
+                    or (m.global_name is not None and m.global_name.strip().lower() == name.strip().lower()),
+                guild.members
+            )
 
             if member is None:
                 print(f"{name} not found in server (by nickname or username).")
@@ -92,7 +102,7 @@ def load_guild_list(filename="data/guild_list.txt"):
                 break
 
     # Flatten to single list of member names
-    all_members = [ign for igns in guild_list.values() for ign in igns]
+    all_members = [ign.strip() for igns in guild_list.values() for ign in igns]
     return all_members
 
 def load_active_list(filename="output/active_igns.txt"):
