@@ -41,22 +41,34 @@ class DiscordRoleUpdaterClient(discord.Client):
             return
 
         print("Fetching members...")
-        # Fetch members to ensure full member list
-        await guild.chunk()
+        # Try to fetch members via the API (works better for large guilds).
+        # Fall back to cached `guild.members` if fetch fails or is unavailable.
+        member_list = []
+        try:
+            async for m in guild.fetch_members(limit=None):
+                member_list.append(m)
+        except Exception as e:
+            print(f"fetch_members failed ({e}); falling back to cached members.")
+            member_list = list(guild.members)
 
-        print(f"Found {len(guild.members)} members in the guild.")
+        if member_list:
+            print(f"Found {len(member_list)} members from fetch.")
+        else:
+            print(f"Using cached members: {len(guild.members)}")
+            member_list = list(guild.members)
+
         for name in self.member_names:
             # Search by nickname, name, and global_name
             member = discord.utils.find(
                 lambda m:
-                    (m.nick is not None and m.nick.strip().lower() == name.strip().lower()) \
-                    or (m.name is not None and m.name.strip().lower() == name.strip().lower()) \
-                    or (m.global_name is not None and m.global_name.strip().lower() == name.strip().lower()),
-                guild.members
+                    (m.nick is not None and m.nick.strip().lower() == name.strip().lower())
+                    or (m.name is not None and m.name.strip().lower() == name.strip().lower())
+                    or (getattr(m, 'global_name', None) is not None and m.global_name.strip().lower() == name.strip().lower()),
+                member_list
             )
 
             if member is None:
-                print(f"{name} not found in server (by nickname or username).")
+                print(f"🚫 {name} not found in server (by nickname or username).")
                 continue
 
             # For demonstration, let's treat everyone in the list as requiring the 'active coolio' role
