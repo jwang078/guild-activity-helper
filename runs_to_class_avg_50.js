@@ -12,14 +12,14 @@ const assert = require('node:assert');
 // Constant XP table from the original script
 
 function calculateRunsToCA50(playerXps, {
-    targetXp = 569809640, floorValue = 300000, hecatomb = 0.02,
-    classBoosts = { archer: 0.1, berserk: 0.1, healer: 0.1, mage: 0.1, tank: 0.1 },
-    grimoire = 0.06, scarfShard = 0.2, globalBoost = 1.0, mayor = 1.0
+    targetXp = 569809640, floorValue = 300000, hecatomb = 1.02,
+    classBoosts = { archer: 1.1, berserk: 1.1, healer: 1.1, mage: 1.1, tank: 1.1 },
+    grimoire = 1.06, scarfShard = 1.2, globalBoost = 1.0, mayor = 1.0
 } = {}) {
     // 1. Define XP per run for each class based on boosts
     const classPerRun = Object.fromEntries(
         Object.keys(classBoosts).map(name => [
-            name, floorValue * ((1 + (hecatomb * 2) + classBoosts[name] + grimoire + scarfShard + (globalBoost - 1)) * Math.min(1.5, mayor))
+            name, floorValue * ((1 + (hecatomb - 1) * 2 + (classBoosts[name] - 1) + (grimoire - 1) + (scarfShard - 1) + (globalBoost - 1)) * Math.min(1.5, mayor))
         ])
     );
 
