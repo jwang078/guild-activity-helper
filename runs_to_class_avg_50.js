@@ -65,10 +65,69 @@ function calculateRunsToCA50(playerXps, {
     };
 }
 
+function calculateCataRunsLeft(cataXp, {
+    targetCataLevel = 50, floorName = "m7", hecatombLevel = "x",
+    cataExpertRing = true, mayor = 1.0, globalBoost = 1.0,
+} = {}) {
+    const FLOOR_XP = {
+        m7: 300000, m6: 100000, m5: 70000, m4: 55000, m3: 35000, m2: 20000, m1: 15000,
+        f7: 28000,  f6: 4880,   f5: 2400,  f4: 1420,  f3: 560,   f2: 220,   f1: 110,  entrance: 55,
+    };
+    const HECATOMB_XP = {
+        x: 1.02, ix: 1.0184, viii: 1.0168, vii: 1.0152, vi: 1.0136,
+        v: 1.012, iv: 1.0104, iii: 1.0088, ii: 1.0072, i: 1.0056, 0: 1.0,
+    };
+    // Index 0 is amount of xp to go from cata level 0 to level 1
+    // Index 49 is amount of xp to go from cata level 49 to level 50, etc
+    const CATA_XP = [
+        50, 75, 110, 160, 230, 330, 470, 670, 950, 1340, 1890, 2665, 3760, 5260, 7380, 10300,
+        14400, 20000, 27600, 38000, 52500, 71500, 97000, 132000, 180000, 243000, 328000, 445000,
+        600000, 800000, 1065000, 1410000, 1900000, 2500000, 3300000, 4300000, 5600000, 7200000,
+        9200000, 12000000, 15000000, 19000000, 24000000, 30000000, 38000000, 48000000, 60000000,
+        75000000, 93000000, 116250000, 200000000,
+    ];
+
+    const floorValue = FLOOR_XP[floorName.toLowerCase()];
+    const hecatombDelta = HECATOMB_XP[hecatombLevel.toLowerCase()] - 1;
+
+    // maxComps is the milestone completion cap for the floor, which affects cata XP scaling
+    const maxComps = floorValue >= 15000 ? 26 : floorValue === 4880 ? 51 : 76;
+
+    // Compute target cata XP
+    let targetCataXp = 0;
+    for (let i = 0; i < targetCataLevel; i++)
+        // The amount of xp to level from 52 to 53, 53 to 54, etc are the same as 51 to 52
+        targetCataXp += i < CATA_XP.length ? CATA_XP[i] : CATA_XP[-1];
+    const cataXpLeft = Math.max(targetCataXp - cataXp, 0);
+
+    // Compute cata XP per run (formula branches on expert ring + mayor)
+    let cataPerRun;
+    if (cataExpertRing && mayor > 1) {
+        cataPerRun = floorValue * (0.95 + (mayor - 1) + (maxComps - 1) / 100 + 0.1 + hecatombDelta + (maxComps - 1) * (0.024 + hecatombDelta / 50));
+    } else if (cataExpertRing) {
+        cataPerRun = floorValue * (0.95 + 0.1 + hecatombDelta + (maxComps - 1) * (0.024 + hecatombDelta / 50));
+    } else {
+        cataPerRun = floorValue * (0.95 + hecatombDelta + (maxComps - 1) * (0.022 + hecatombDelta / 50));
+    }
+    cataPerRun = Math.ceil(cataPerRun * globalBoost);
+
+    return {
+        cataPerRun,
+        runsLeft: Math.ceil(cataXpLeft / cataPerRun),
+    };
+}
+
 /**
  * TEST SUITE / BENCHMARKING
  */
 const scenarios = [
+    {
+        name: "Max Player (M7)",
+        playerClassXps: { archer: 850e6, berserk: 950e6, healer: 750e6, mage: 750e6, tank: 750e6 },
+        config: {},
+        expectedTotalRuns: 0,
+        expectedClassPerRun: { archer: 420000, berserk: 420000, healer: 420000, mage: 420000, tank: 420000 }
+    },
     {
         name: "Near Max Player (M7)",
         playerClassXps: { archer: 550e6, berserk: 550e6, healer: 550e6, mage: 550e6, tank: 550e6 },
@@ -110,11 +169,63 @@ scenarios.forEach(s => {
         console.log(`- Class per Run:`, result.classPerRun)
         
         // Assertions to ensure logic isn't broken
-        assert.strictEqual(result.total, s.expectedTotalRuns, "Total runs mismatch");
-        
+        assert.strictEqual(result.total, s.expectedTotalRuns, `total: expected ${s.expectedTotalRuns}, got ${result.total}`);
+
         for (const [cls, xp] of Object.entries(s.expectedClassPerRun)) {
-            assert.strictEqual(Math.round(result.classPerRun[cls]), xp, `classPerRun.${cls} mismatch`);
+            const actual = Math.round(result.classPerRun[cls]);
+            assert.strictEqual(actual, xp, `classPerRun.${cls}: expected ${xp}, got ${actual}`);
         }
     });
 });
 console.timeEnd("Total Benchmark Time");
+
+const cataScenarios = [
+    {
+        name: "Cata: Already Max Player (M7)",
+        cataXp: 950e6,
+        config: {},
+        expectedCataPerRun: 504001,
+        expectedRunsLeft: 0,
+    },
+    {
+        name: "Cata: Near Max Player (M7)",
+        cataXp: 550e6,
+        config: {},
+        expectedCataPerRun: 504001,
+        expectedRunsLeft: 40,
+    },
+    {
+        name: "Cata: Fresh Level 0 (F7)",
+        cataXp: 0,
+        config: { floorName: "f7" },
+        expectedCataPerRun: 47041,
+        expectedRunsLeft: 12114,
+    },
+    {
+        name: "Cata: Derpy Boost (M7)",
+        cataXp: 200e6,
+        config: { mayor: 1.5 },
+        expectedCataPerRun: 729000,
+        expectedRunsLeft: 508,
+    },
+    {
+        name: "Cata: No Expert Ring (M7)",
+        cataXp: 200e6,
+        config: { cataExpertRing: false },
+        expectedCataPerRun: 459000,
+        expectedRunsLeft: 806,
+    },
+];
+
+cataScenarios.forEach(s => {
+    test(s.name, () => {
+        const result = calculateCataRunsLeft(s.cataXp, s.config);
+
+        console.log(`\n[${s.name}]`);
+        console.log(`- Cata Per Run: ${result.cataPerRun.toLocaleString()}`);
+        console.log(`- Runs Left: ${result.runsLeft.toLocaleString()}`);
+
+        assert.strictEqual(result.cataPerRun, s.expectedCataPerRun, `cataPerRun: expected ${s.expectedCataPerRun}, got ${result.cataPerRun}`);
+        assert.strictEqual(result.runsLeft,   s.expectedRunsLeft,   `runsLeft: expected ${s.expectedRunsLeft}, got ${result.runsLeft}`);
+    });
+});
