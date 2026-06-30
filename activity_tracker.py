@@ -8,6 +8,8 @@ import traceback
 import argparse
 from collections import defaultdict
 import math
+import time
+import matplotlib.pyplot as plt
 
 
 # for running main() as an async function
@@ -145,6 +147,9 @@ class DiscordLogClient(discord.Client):
                     print(
                         f"msg# {i}/{self.max_messages}, day# {(today - timestamp).days}/{self.max_days}"
                     )
+
+                if i % 300 == 0:
+                    time.sleep(2)  # sleep to avoid rate limits
         except Exception as e:
             print(e)
             print(traceback.format_exc())
@@ -642,6 +647,31 @@ class ActivityTracker:
                 for ign in self.boiled_to_scrambled_promotion_igns
                 if ign not in unknown_join_igns
             ]
+        )
+
+        # Plot histogram of # hours and save it to a file
+        def plot_activity_histogram(info_dict, title, filename_suffix=""):
+            hours = [info[self.NUM_HOURS_KEY] for info in info_dict.values()]
+            plt.hist(hours, bins=20)
+            plt.xlabel("Hours in the last 60 days")
+            plt.ylabel("Number of guild members")
+            plt.xlim(0, max(hours) + 5)
+            plt.title(title)
+            plt.savefig(f"output/activity_histogram_{filename_suffix}.png")
+            plt.clf()
+            # close plot
+            plt.close()
+        plot_activity_histogram(active_activity, "Activity histogram for active players", "active")
+        plot_activity_histogram(
+            grace_period_activity, "Activity histogram for grace period players", "grace_period"
+        )
+        plot_activity_histogram(
+            inactive_activity, "Activity histogram for inactive players" "", "inactive"
+        )
+        plot_activity_histogram(
+            {**active_activity, **grace_period_activity, **inactive_activity},
+            "Activity histogram for all players",
+            "all"
         )
 
     def print_disclaimers(self):
